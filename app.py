@@ -1,21 +1,19 @@
-from markdown import markdown
 import pandas as pd
 import json
 import matplotlib.pyplot as plt
 import streamlit as st
 import streamlit.components.v1 as stc
+from streamlit_option_menu import option_menu
+from markdown import markdown
 import plotly.express as px
 import seaborn as sns
-from streamlit_option_menu import option_menu
-import streamlit.components.v1 as components
 import plotly.graph_objects as go
 import numpy as np
-from Quartier import humeur, evolution, categorie, report
+from Plot import humeur, evolution, categorie, report
 from datetime import timedelta
 import time
 import base64
 
-timestr = time.strftime("%Y%m%d-%H%M%S")
 
 logo = "logoSC.png"
 image = "smart_city.png"
@@ -23,6 +21,7 @@ ia_scool_logo = "ia_school_logo.png"
 st.set_page_config(page_icon = logo, page_title ="Smart City !", layout = "wide")
 
 
+@st.cache(allow_output_mutation=True)
 def load_data(df):
     df = pd.read_csv(df)
     return df
@@ -32,12 +31,17 @@ df_post.DATE = pd.to_datetime(df_post.DATE).dt.date
 
 df_comment = load_data("df_comment.csv")
 
+
+
 def home():
     st.title(":hibiscus: Projet Smart City")
     st.subheader("Détecter les causes de mécontentement des résidents")
     st.markdown("**Cet webApp a été codée dans le cadre du projet IA proposé par l'IA School sur le thème de\
-        Smart-City. Elle permet à l'utilisateur de pouvoir détecter rapidement les sources de mécontentement des\
-    résidents des quartiers Smart-City. Elle se décompose en plusieurs onglets :**")
+        Smart-City. Les données nous ont été confiées par l'entreprise Losinger. Elles représentent les posts\
+            des résidents publiés sur une application sur laquelle ils peuvent\
+            communiquer entre eux. Elle permet à l'utilisateur de pouvoir détecter rapidement\
+                 les sources de mécontentement des résidents des quartiers Smart-City. Elle se\
+                     décompose en plusieurs onglets :**")
 
     st.markdown("##### :rage: Alerte")
     st.write("La page alerte se veut être un rapport des post et commentaires négatifs des derniers jours.\
@@ -56,14 +60,9 @@ def home():
             résidents.")
     
 
-    
-
-
-    
-
-
 
 def page_quartier():
+    st.header("KPI")
     with st.container():
         col1, col2, col3 = st.columns(3)
         
@@ -77,6 +76,13 @@ def page_quartier():
         
         
     df_temp = df_post[(df_post.DATE > date_min) & (df_post.DATE < date_max)]
+    barplot = df_temp.groupby("Topics_text").agg({"post":"count", "score_pondere":"mean"}).reset_index()
+    barplot.columns = ["Topics_text", "count", "score_pondere"]
+    barplot.score_pondere = round(barplot.score_pondere,2)
+    barplot = barplot.sort_values("count", ascending=True).tail(10)
+    liste_categories = barplot.Topics_text.unique().tolist()
+    liste_categories.append("Toutes")
+
 
     expander_kpi = st.expander(label='AFFICHER KPI', expanded=False)
 
@@ -90,24 +96,29 @@ def page_quartier():
 
     expander_plot = st.expander(label='SENTIMENTS', expanded=False)
 
+    
     with expander_plot:
+        col1, col2, col3 = st.columns(3)
+
+        cat_sentiment = col1.selectbox("Choisir une catégorie", liste_categories)
+        if cat_sentiment != "Toutes":
+            df_temp_cat = df_temp[df_temp.Topics_text ==  cat_sentiment]
+        else :
+            df_temp_cat = df_temp
+        
+
         col1, col2, col3 = st.columns([3,1,7])
         with col1:
-            humeur(df_temp)
+            humeur(df_temp_cat)
 
         with col3:
-            evolution(df_temp)
+            evolution(df_temp_cat)
 
     expander_categorie = st.expander(label='CATEGORIES', expanded=False)
     with expander_categorie:
 
-
         categorie(df_temp)
 
-        barplot = df_temp.groupby("Topics_text").agg({"post":"count", "score_pondere":"mean"}).reset_index()
-        barplot.columns = ["Topics_text", "count", "score_pondere"]
-        barplot.score_pondere = round(barplot.score_pondere,2)
-        barplot = barplot.sort_values("count", ascending=True).tail(10)
 
         with st.container():
             col1, col2, col3 = st.columns([6,3,6])
@@ -152,6 +163,7 @@ def page_quartier():
 
 
 def alerte():
+    st.header("Alertes")
     derniere_date = df_post.loc[df_post.shape[0]-1, "DATE"]
     date_15j = pd.to_datetime(derniere_date) - timedelta(days=7)
 
@@ -284,6 +296,76 @@ def alerte():
 
 
 
+def page_maintenance():
+    st.header("Tickets de maintenance")
+    df_ticket = load_data("df_ticket.csv")
+    df_ticket.DateTime_x = pd.to_datetime(df_ticket.DateTime_x).dt.date
+    
+
+    premiere_date = df_ticket.loc[0, "DateTime_x"]
+    derniere_date = df_ticket.loc[df_ticket.shape[0]-1, "DateTime_x"]
+
+    with st.container():
+        col1, col2, col3 = st.columns([3,0.5,3])
+
+        date_min = col1.date_input("Choisir la date min",
+        value = premiere_date, min_value=premiere_date, max_value=derniere_date)
+        date_max = col3.date_input("Choisir la date max",
+        value = derniere_date, min_value=premiere_date, max_value=derniere_date)
+
+    df_ticket = df_ticket[(df_ticket.DateTime_x>=date_min) & (df_ticket.DateTime_x<=date_max)]
+
+    st.markdown("#") #Pour laisser un espace
+
+    #Calcul des KPI à afficher
+    temps_reponse_moyen = round(df_ticket.Duration.mean())
+    delta = temps_reponse_moyen-7
+    nombre_tickets = df_ticket.Ticket_ID.nunique()
+    ticket_sans_reponse = df_ticket.Duration.isna().sum()
+
+    if delta < 0:
+        delta = ""
+    else :
+        delta = delta *-1
+
+    with st.container():
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Nombre de tickets", nombre_tickets)
+        col2.metric("Temps de cloture moyen", str(temps_reponse_moyen) + " jours", delta=delta)
+        col3.metric("Nombre de tickets sans réponse", ticket_sans_reponse)
+    
+    count_ticket = df_ticket.groupby("Topics_text").agg({"Duration":"mean", "Ticket_ID":"count"})
+    count_ticket = count_ticket.sort_values("Ticket_ID")
+
+    fig = px.bar(count_ticket, y=count_ticket.index, x="Ticket_ID", color="Duration", color_continuous_scale = "ylorbr",
+       title = "Nombre de tickets par catégorie et leur temps de cloture", orientation="h")
+    fig.update_yaxes(title = "")
+    fig.update_xaxes(title = "Count")
+    fig.update_layout(width=1000, height=700)
+    st.plotly_chart(fig)
+
+    with st.container():
+        col1, col2, col3 = st.columns([6,3,6])
+
+        with col1:
+            cat = st.selectbox("Choisir une catégorie",df_ticket.Topics_text.unique().tolist())
+        with col2:
+            cloture = st.radio("", options=('Non Cloturé', 'Cloturé'))
+            
+    
+    if cloture == "Non Cloturé":
+        df_ticket = df_ticket[(df_ticket.Topics_text == cat) & (df_ticket.Duration.isna())]
+    else :
+        df_ticket = df_ticket[(df_ticket.Topics_text == cat) & (~df_ticket.Duration.isna())]
+
+
+    df_ticket["DATE"] = df_ticket.DateTime_x.apply(lambda x : x.strftime("%Y-%m-%d"))
+    df_ticket.rename(columns = {"Content_y":"Tickets"}, inplace = True)
+
+
+
+    st.table(df_ticket[["Tickets", "DATE"]])
+
 
 def main():
 
@@ -306,7 +388,7 @@ def main():
     if choice == "Quartier":
         page_quartier()
     elif choice == "Maintenance":
-        pass
+        page_maintenance()
     elif choice == "Alerte":
         alerte()
     
